@@ -5,7 +5,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"github.com/vbehar/openshift-git/pkg/openshift"
@@ -73,7 +72,12 @@ func NewRepository(path, branch, remoteURL, contextDir string) (*Repository, err
 		return nil, err
 	}
 
-	// TODO check if repo has remote - and pull
+	if len(remoteURL) > 0 {
+		glog.Infof("Scheduling push/pull to/from remote repository %s ...", remoteURL)
+		// TODO do a first pull if using an existing local repo
+	} else {
+		glog.Infof("No remote repository configured.")
+	}
 
 	repository := &Repository{
 		Repository: repo,
@@ -204,13 +208,8 @@ func (r *Repository) PathWithContextDir() string {
 // It is a function that returns the list of keys ("namespace/name" format)
 // that we "know about" (to get a 2-way sync) for the given kind of resources.
 // It simply walks the FS to list all the resources matching the given kind.
-func (r *Repository) KeyListFuncForKind(obj interface{}) func() []string {
+func (r *Repository) KeyListFuncForKind(kind string) func() []string {
 	return func() []string {
-		objValue := reflect.ValueOf(obj)
-		if objValue.Kind() == reflect.Ptr {
-			objValue = reflect.Indirect(objValue)
-		}
-		kind := objValue.Type().Name()
 		keys := []string{}
 
 		err := filepath.Walk(r.PathWithContextDir(), func(path string, info os.FileInfo, err error) error {
@@ -247,13 +246,8 @@ func (r *Repository) KeyListFuncForKind(obj interface{}) func() []string {
 // It is a function that returns the object that we "know about"
 // for the given key ("namespace/name" format) - and a boolean if it exists
 // for the given kind and format.
-func (r *Repository) KeyGetFuncForKindAndFormat(obj interface{}, format string) func(key string) (interface{}, bool, error) {
+func (r *Repository) KeyGetFuncForKindAndFormat(kind, format string) func(key string) (interface{}, bool, error) {
 	return func(key string) (interface{}, bool, error) {
-		objValue := reflect.ValueOf(obj)
-		if objValue.Kind() == reflect.Ptr {
-			objValue = reflect.Indirect(objValue)
-		}
-		kind := objValue.Type().Name()
 		resource := openshift.NewResource(kind, key)
 		path := r.PathForResource(resource, format)
 

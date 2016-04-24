@@ -1,8 +1,10 @@
 package export
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -11,19 +13,26 @@ import (
 	"github.com/vbehar/openshift-git/pkg/openshift"
 
 	kapi "k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/meta"
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/kubectl"
+	"k8s.io/kubernetes/pkg/kubectl/resource"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/watch"
 
 	"github.com/golang/glog"
 )
 
-func runWatch(repo *git.Repository) {
+// runWatch run the export controllers for the given resources
+func runWatch(resources string, repo *git.Repository) error {
 	saveWaiter := &sync.WaitGroup{}
 	stopChan := make(chan struct{})
 	resourcesChan := make(chan openshift.Resource, 10)
 
 	namespace, _, err := openshift.Factory.DefaultNamespace()
 	if err != nil {
-		glog.Fatalf("Failed to get namespace: %v", err)
+		return err
 	}
 	if exportOptions.AllNamespaces {
 		namespace = kapi.NamespaceAll
@@ -32,12 +41,26 @@ func runWatch(repo *git.Repository) {
 	mapper, _ := openshift.Factory.Object()
 	oclient, kclient, err := openshift.Factory.Clients()
 	if err != nil {
-		glog.Fatalf("Failed to get openshift client from factory: %v", err)
+		return err
+	}
+
+	kinds, err := openshift.KindsFor(mapper, resource.SplitResourceArgument(resources))
+	if err != nil {
+		return err
+	}
+	if len(kinds) == 0 {
+		return fmt.Errorf("No valid kinds for '%s'", resources)
+	}
+
+	if exportOptions.AllNamespaces {
+		glog.Infof("Running export for kinds %v for all namespaces", kinds)
+	} else {
+		glog.Infof("Running export for kinds %v for namespace %s", kinds, namespace)
 	}
 
 	printer, _, err := kubectl.GetPrinter(exportOptions.Format, "")
 	if err != nil {
-		glog.Fatalf("Failed to get printer for format %s: %v", exportOptions.Format, err)
+		return err
 	}
 
 	saveWaiter.Add(1)
@@ -46,33 +69,37 @@ func runWatch(repo *git.Repository) {
 		saveResources(repo, resourcesChan, mapper, printer)
 	}()
 
-	if exportOptions.AllNamespaces {
-		runNamespacesController(kclient.Namespaces(), stopChan, resourcesChan, repo, exportOptions)
-		runPersistentVolumesController(kclient.PersistentVolumes(), stopChan, resourcesChan, repo, exportOptions)
-		runSecurityContextConstraintsController(kclient.SecurityContextConstraints(), stopChan, resourcesChan, repo, exportOptions)
-		runClusterPoliciesController(oclient.ClusterPolicies(), stopChan, resourcesChan, repo, exportOptions)
-		runClusterPolicyBindingsController(oclient.ClusterPolicyBindings(), stopChan, resourcesChan, repo, exportOptions)
-		runUsersController(oclient.Users(), stopChan, resourcesChan, repo, exportOptions)
-		runGroupsController(oclient.Groups(), stopChan, resourcesChan, repo, exportOptions)
-	} else {
-		runNamespaceController(kclient.Namespaces(), namespace, stopChan, resourcesChan, repo, exportOptions)
-	}
+	knownTypes := kapi.Scheme.KnownTypes(kapi.Unversioned)
 
-	runBuildConfigsController(oclient.BuildConfigs(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runDeploymentConfigsController(oclient.DeploymentConfigs(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runReplicationControllersController(kclient.ReplicationControllers(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runPodsController(kclient.Pods(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runImageStreamsController(oclient.ImageStreams(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runServicesController(kclient.Services(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runRoutesController(oclient.Routes(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runTemplatesController(oclient.Templates(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runSecretsController(kclient.Secrets(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runLimitRangesController(kclient.LimitRanges(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runResourceQuotasController(kclient.ResourceQuotas(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runPersistentVolumeClaimsController(kclient.PersistentVolumeClaims(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runPoliciesController(oclient.Policies(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runPolicyBindingsController(oclient.PolicyBindings(namespace), stopChan, resourcesChan, repo, exportOptions)
-	runServiceAccountsController(kclient.ServiceAccounts(namespace), stopChan, resourcesChan, repo, exportOptions)
+	for _, gvk := range kinds {
+		mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+		if err != nil {
+			return err
+		}
+
+		var restClient resource.RESTClient
+		restClient = kclient
+		if kindType, found := knownTypes[gvk.Kind]; found {
+			if strings.Contains(kindType.PkgPath(), "openshift") {
+				restClient = oclient
+			}
+		}
+
+		if mapping.Scope.Name() == meta.RESTScopeNameRoot && !exportOptions.AllNamespaces {
+			switch gvk.Kind {
+			case "Namespace", "Project":
+				if err := runControllerForNamespace(gvk, namespace, mapper, restClient, stopChan, resourcesChan, repo, exportOptions); err != nil {
+					return err
+				}
+			default:
+				glog.Warningf("Ignoring root kind %s because you asked for a specific namespace", gvk)
+			}
+		} else {
+			if err := runController(gvk, namespace, mapper, restClient, stopChan, resourcesChan, repo, exportOptions); err != nil {
+				return err
+			}
+		}
+	}
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGTERM)
@@ -84,4 +111,126 @@ func runWatch(repo *git.Repository) {
 		close(resourcesChan)
 		saveWaiter.Wait()
 	}
+
+	return nil
+}
+
+// runController starts an export controller (in a new goroutine) for the given kind,
+// in the given namespace
+func runController(gvk unversioned.GroupVersionKind,
+	namespace string,
+	mapper meta.RESTMapper, restClient resource.RESTClient,
+	stopChan <-chan struct{}, resourcesChan chan<- openshift.Resource,
+	repo *git.Repository, exportOptions *ExportOptions) error {
+
+	if !kapi.Scheme.Recognizes(gvk) {
+		return fmt.Errorf("GVK %s not recognizes", gvk)
+	}
+
+	obj, err := kapi.Scheme.New(gvk)
+	if err != nil {
+		return err
+	}
+
+	mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return err
+	}
+
+	helper := resource.NewHelper(restClient, mapping)
+
+	var requirements []func() (*labels.Requirement, error)
+	if exportOptions.UseDefaultSelector {
+		requirements = DefaultRequirementsFor(gvk)
+	}
+
+	glog.V(1).Infof("Starting export controller for %s", gvk.Kind)
+	(&openshift.ExportController{
+		ResourcesChan: resourcesChan,
+		LabelSelector: exportOptions.LabelSelector,
+		ResyncPeriod:  exportOptions.ResyncPeriod,
+		Kind:          obj,
+		KeyListFunc:   repo.KeyListFuncForKind(gvk.Kind),
+		KeyGetFunc:    repo.KeyGetFuncForKindAndFormat(gvk.Kind, exportOptions.Format),
+		ListFunc: func(options kapi.ListOptions) (runtime.Object, error) {
+			return helper.List(namespace, gvk.Version, options.LabelSelector, false)
+		},
+		WatchFunc: func(options kapi.ListOptions) (watch.Interface, error) {
+			return helper.Watch(namespace, options.ResourceVersion, gvk.Version, options.LabelSelector)
+		},
+		Requirements: requirements,
+	}).RunUntil(stopChan)
+
+	return nil
+}
+
+// runControllerForNamespace starts an export controller (in a new goroutine)
+// that can be used to export a single namespace/project.
+func runControllerForNamespace(gvk unversioned.GroupVersionKind,
+	namespace string,
+	mapper meta.RESTMapper, restClient resource.RESTClient,
+	stopChan <-chan struct{}, resourcesChan chan<- openshift.Resource,
+	repo *git.Repository, exportOptions *ExportOptions) error {
+
+	gvkList := gvk.GroupVersion().WithKind(gvk.Kind + "List")
+
+	if !kapi.Scheme.Recognizes(gvk) {
+		return fmt.Errorf("GVK %s not recognizes", gvk)
+	}
+
+	obj, err := kapi.Scheme.New(gvk)
+	if err != nil {
+		return err
+	}
+
+	mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return err
+	}
+
+	helper := resource.NewHelper(restClient, mapping)
+
+	var requirements []func() (*labels.Requirement, error)
+	if exportOptions.UseDefaultSelector {
+		requirements = DefaultRequirementsFor(gvk)
+	}
+
+	glog.V(1).Infof("Starting export controller for %s %s...", gvk.Kind, namespace)
+	(&openshift.ExportController{
+		ResourcesChan: resourcesChan,
+		LabelSelector: exportOptions.LabelSelector,
+		ResyncPeriod:  exportOptions.ResyncPeriod,
+		Kind:          obj,
+		KeyListFunc:   repo.KeyListFuncForKind(gvk.Kind),
+		KeyGetFunc:    repo.KeyGetFuncForKindAndFormat(gvk.Kind, exportOptions.Format),
+		ListFunc: func(options kapi.ListOptions) (runtime.Object, error) {
+			obj, err := helper.Get(namespace, namespace, false)
+			if err != nil {
+				return nil, err
+			}
+
+			newObj, err := kapi.Scheme.ConvertToVersion(obj, gvk.Version)
+			if err != nil {
+				return nil, err
+			}
+
+			listObject, err := kapi.Scheme.New(gvkList)
+			if err != nil {
+				return nil, err
+			}
+
+			if err := meta.SetList(listObject, []runtime.Object{newObj}); err != nil {
+				return nil, err
+			}
+
+			return listObject, nil
+		},
+		WatchFunc: func(options kapi.ListOptions) (watch.Interface, error) {
+			// can't watch a single specific namespace, so let's watch nothing for the moment
+			return watch.NewFake(), nil
+		},
+		Requirements: requirements,
+	}).RunUntil(stopChan)
+
+	return nil
 }

@@ -56,7 +56,7 @@ type ExportController struct {
 // until stopChan is closed
 func (c *ExportController) RunUntil(stopChan <-chan struct{}) {
 	queue := cache.NewDeltaFIFO(cache.MetaNamespaceKeyFunc, nil, c)
-	cache.NewReflector(c, c.Kind, queue, c.ResyncPeriod).RunUntil(stopChan)
+	cache.NewReflector(c, nil, queue, c.ResyncPeriod).RunUntil(stopChan)
 
 	retryController := &controller.RetryController{
 		Handle: c.handle,

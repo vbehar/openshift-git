@@ -1,16 +1,15 @@
 package openshift
 
 import (
-	"fmt"
-	"reflect"
-
-	"github.com/golang/glog"
 	"github.com/openshift/origin/pkg/cmd/cli/cmd"
 
 	kapi "k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/client/cache"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/runtime"
+
+	"github.com/golang/glog"
 )
 
 // ExportLister represents a lister that can list some resources,
@@ -47,7 +46,7 @@ func (l *ExportLister) List() error {
 		return err
 	}
 
-	items, err := extractListItems(res)
+	items, err := meta.ExtractList(res)
 	if err != nil {
 		return err
 	}
@@ -105,74 +104,4 @@ func (l *ExportLister) extendSelector(selector labels.Selector) (labels.Selector
 		}
 	}
 	return extendSelector(selector, requirementFuncs...)
-}
-
-// extractListItems extracts from the given object (which should be a *kapi.List)
-// a slice of objects (contained in the Items field).
-func extractListItems(object runtime.Object) ([]runtime.Object, error) {
-	results := []runtime.Object{}
-
-	objectValue := reflect.ValueOf(object)
-	if !objectValue.IsValid() {
-		return nil, fmt.Errorf("Can't get the value of %+v", object)
-	}
-
-	// object should be a *kapi.List
-	if objectValue.Kind() == reflect.Ptr {
-		objectValue = objectValue.Elem()
-	}
-
-	if objectValue.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("The list %+v should be a Struct, but it seems to be a %v", object, objectValue.Kind())
-	}
-
-	// the list should have an Items field
-	itemsField := objectValue.FieldByName("Items")
-	if !itemsField.IsValid() {
-		return nil, fmt.Errorf("The struct %+v should have an 'Items' field", object)
-	}
-
-	if !itemsField.CanInterface() {
-		return nil, fmt.Errorf("Can't interface the items field %v", itemsField)
-	}
-	items := itemsField.Interface()
-
-	itemsValue := reflect.ValueOf(items)
-	if !itemsValue.IsValid() {
-		return nil, fmt.Errorf("Can't get the value of %+v", items)
-	}
-
-	// Items should be a slice
-	if itemsValue.Kind() != reflect.Slice {
-		return nil, fmt.Errorf("The Items %+v should be a Slice, but it seems to be a %v", items, itemsValue.Kind())
-	}
-
-	for i := 0; i < itemsValue.Len(); i++ {
-		valueValue := itemsValue.Index(i)
-		if !valueValue.IsValid() {
-			return nil, fmt.Errorf("Can't get the value of elem %d in the Items %+v", i, items)
-		}
-
-		// The elems in the slice are not pointers,
-		// but we need them to be pointers
-		if valueValue.Kind() != reflect.Ptr && valueValue.CanAddr() {
-			valueValue = valueValue.Addr()
-		}
-		if valueValue.Kind() != reflect.Ptr {
-			return nil, fmt.Errorf("The elem %d in the Items %+v should be a Pointer, but it seems to be a %v", i, items, valueValue.Kind())
-		}
-
-		if !valueValue.CanInterface() {
-			return nil, fmt.Errorf("Can't interface the elem %d %v", i, valueValue)
-		}
-		value := valueValue.Interface()
-
-		if obj, ok := value.(runtime.Object); ok {
-			results = append(results, obj)
-		} else {
-			return nil, fmt.Errorf("Value %+v is not a runtime.Object", value)
-		}
-	}
-
-	return results, nil
 }
