@@ -37,7 +37,7 @@ type Repository struct {
 // If there is nothing at the given path, a new repository will be initialized:
 // - If a remoteURL is provided, we will clone from this configured remote
 // - Otherwise, we will just create an new empty repository
-func NewRepository(path, branch, remoteURL, contextDir string) (*Repository, error) {
+func NewRepository(path, branch, remoteURL, contextDir, userName, userEmail string) (*Repository, error) {
 	fi, err := os.Stat(path)
 
 	if os.IsNotExist(err) {
@@ -52,6 +52,17 @@ func NewRepository(path, branch, remoteURL, contextDir string) (*Repository, err
 				return nil, err
 			}
 			if err := git.InitRepository(path, false); err != nil {
+				return nil, err
+			}
+		}
+
+		if len(userName) > 0 {
+			if err := SetUserName(path, userName); err != nil {
+				return nil, err
+			}
+		}
+		if len(userEmail) > 0 {
+			if err := SetUserEmail(path, userEmail); err != nil {
 				return nil, err
 			}
 		}

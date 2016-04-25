@@ -68,7 +68,9 @@ Otherwise, you can use the same option as the OpenShift Client (oc):
 			repo, err := git.NewRepository(exportOptions.RepositoryPath,
 				exportOptions.RepositoryBranch,
 				exportOptions.RepositoryRemote,
-				exportOptions.RepositoryContextDir)
+				exportOptions.RepositoryContextDir,
+				exportOptions.RepositoryUserName,
+				exportOptions.RepositoryUserEmail)
 			if err != nil {
 				glog.Fatalf("Failed to init git repo: %v", err)
 			}
@@ -97,6 +99,8 @@ func init() {
 	exportCmd.Flags().StringVar(&exportOptions.RepositoryBranch, "repository-branch", "master", "Branch of the git repository to use for commits.")
 	exportCmd.Flags().StringVar(&exportOptions.RepositoryRemote, "repository-remote", "", "Optional URL of a remote git repository. If present, periodic push/pull operations will be scheduled, to keep the local and remote repositories in sync.")
 	exportCmd.Flags().StringVar(&exportOptions.RepositoryContextDir, "repository-context-dir", "", "Optional relative directory (in the repository) that will be used to store data.")
+	exportCmd.Flags().StringVar(&exportOptions.RepositoryUserName, "repository-user-name", "OpenShift", "Name used for the commits to the Git repository.")
+	exportCmd.Flags().StringVar(&exportOptions.RepositoryUserEmail, "repository-user-email", "openshift@example.com", "Email used for the commits to the Git repository.")
 	exportCmd.Flags().StringVar(&exportOptions.Format, "format", "yaml", "Format of the exported resources ('json' or 'yaml')")
 	exportCmd.Flags().StringVarP(&exportOptions.LabelSelector, "selector", "l", "", "Selector (label query) to filter on")
 	exportCmd.Flags().BoolVar(&exportOptions.AllNamespaces, "all-namespaces", false, "If present, export the requested resources across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
@@ -120,6 +124,8 @@ type ExportOptions struct {
 	RepositoryBranch     string
 	RepositoryRemote     string
 	RepositoryContextDir string
+	RepositoryUserName   string
+	RepositoryUserEmail  string
 	RepositoryPullPeriod time.Duration
 	RepositoryPushPeriod time.Duration
 }
