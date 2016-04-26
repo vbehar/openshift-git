@@ -41,32 +41,9 @@ func NewRepository(path, branch, remoteURL, contextDir, userName, userEmail stri
 	fi, err := os.Stat(path)
 
 	if os.IsNotExist(err) {
-		if len(remoteURL) > 0 {
-			glog.Infof("Cloning from %s to %s ...", remoteURL, path)
-			if err := git.Clone(remoteURL, path, git.CloneRepoOptions{}); err != nil {
-				return nil, err
-			}
-		} else {
-			glog.Infof("Initializing a new empty repository at %s ...", path)
-			if err := os.MkdirAll(path, os.ModePerm); err != nil {
-				return nil, err
-			}
-			if err := git.InitRepository(path, false); err != nil {
-				return nil, err
-			}
+		if err := initNewRepository(path, remoteURL); err != nil {
+			return nil, err
 		}
-
-		if len(userName) > 0 {
-			if err := SetUserName(path, userName); err != nil {
-				return nil, err
-			}
-		}
-		if len(userEmail) > 0 {
-			if err := SetUserEmail(path, userEmail); err != nil {
-				return nil, err
-			}
-		}
-
 		err = nil
 	}
 
@@ -78,8 +55,18 @@ func NewRepository(path, branch, remoteURL, contextDir, userName, userEmail stri
 		return nil, fmt.Errorf("%s is not a directory", path)
 	}
 
+	if valid, _ := isValidGitRepository(path); !valid {
+		if err := initNewRepository(path, remoteURL); err != nil {
+			return nil, err
+		}
+	}
+
 	repo, err := git.OpenRepository(path)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := setRepositoryAuthor(path, userName, userEmail); err != nil {
 		return nil, err
 	}
 
@@ -273,4 +260,65 @@ func (r *Repository) KeyGetFuncForKindAndFormat(kind, format string) func(key st
 		glog.V(4).Infof("Found %v for %s %s at %s", resource, kind, key, path)
 		return *resource, true, nil
 	}
+}
+
+// isValidGitRepository checks if the repository at the given path is valid
+// To be valid, it needs to have an existing ".git" sub-directory
+func isValidGitRepository(path string) (bool, error) {
+	// check main repository directory
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	if !fi.IsDir() {
+		return false, nil
+	}
+
+	// check the .git directory
+	gitPath := filepath.Join(path, ".git")
+	fi, err = os.Stat(gitPath)
+	if err != nil {
+		return false, err
+	}
+	if !fi.IsDir() {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// initNewRepository initializes a new git repository
+// optionally cloning from the given remote URL (if provided)
+func initNewRepository(path, remoteURL string) error {
+	if len(remoteURL) > 0 {
+		glog.Infof("Cloning from %s to %s ...", remoteURL, path)
+		if err := git.Clone(remoteURL, path, git.CloneRepoOptions{}); err != nil {
+			return err
+		}
+	} else {
+		glog.Infof("Initializing a new empty repository at %s ...", path)
+		if err := os.MkdirAll(path, os.ModePerm); err != nil {
+			return err
+		}
+		if err := git.InitRepository(path, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// setRepositoryAuthor configure the author (user name and email)
+// for the given git repository
+func setRepositoryAuthor(path, userName, userEmail string) error {
+	if len(userName) > 0 {
+		if err := SetUserName(path, userName); err != nil {
+			return err
+		}
+	}
+	if len(userEmail) > 0 {
+		if err := SetUserEmail(path, userEmail); err != nil {
+			return err
+		}
+	}
+	return nil
 }
