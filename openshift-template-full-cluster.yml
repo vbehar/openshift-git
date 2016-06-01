@@ -1,0 +1,125 @@
+# This OpenShift template will deploy a pre-build docker image from DockerHub
+# and configure it to export resources from the whole cluster (all-namespaces).
+# Use it from the CLI with:
+# $ oc new-app -f openshift-template-full-cluster.yml -p SERVICE_ACCOUNT=xxx,SSH_KEYS_SECRET=xxx
+
+kind: Template
+apiVersion: v1
+metadata:
+  name: git-export-all
+  annotations:
+    description: "Deploys the OpenShift-Git Exporter application, for the whole cluster."
+    tags: "openshift,git,export,all"
+labels:
+  template: git-export-all
+
+parameters:
+
+# mandatory parameters
+- name: SERVICE_ACCOUNT
+  description: The name of a ServiceAccount which has the cluster-reader role
+  required: true
+- name: SSH_KEYS_SECRET
+  description: The name of a Secret which has the SSH config and key
+  required: true
+
+# optional parameters
+- name: TYPES
+  description: "Comma-separated list of types to export (bc, dc, pods, ...). Or 'everything' to just export every type."
+  value: everything
+- name: SELECTOR
+  description: Label Selector used to filter the resources to export
+  value: git-export notin (ignore)
+- name: REMOTE_GIT_REPOSITORY_URL
+  description: "Optional URL of a remote git repository. If present, periodic push/pull operations will be scheduled, to keep the local and remote repositories in sync"
+  value: 
+- name: GIT_REPOSITORY_BRANCH
+  description: Branch of the git repository to use for commits
+  value: master
+- name: GIT_AUTHOR_NAME
+  description: Name used for the commits to the Git repository
+  value: OpenShift
+- name: GIT_AUTHOR_EMAIL
+  description: Email used for the commits to the Git repository
+  value: openshift@example.com
+- name: REMOTE_GIT_REPOSITORY_PULL_PERIOD
+  description: Define the interval of time to perform a pull from the remote git repository. Set to 0 to disable.
+  value: 2m
+- name: REMOTE_GIT_REPOSITORY_PUSH_PERIOD
+  description: Define the interval of time to perform a push to the remote git repository. Set to 0 to disable.
+  value: 2m
+- name: RESYNC_PERIOD
+  description: Define the interval of time to perform a full resync of the OpenShift resources to export. Set to 0 to disable.
+  value: 1h
+- name: FORMAT
+  description: Format of the exported resources ('json' or 'yaml')
+  value: yaml
+- name: LOG_LEVEL
+  description: "Log level. 0 for almost no logs (except warnings/errors), 3 for more logs, 5 even more, 8 forget about it ;-)"
+  value: "0"
+
+# optional deployer options
+- name: IMAGE
+  description: The reference of the Docker image to deploy
+  value: vbehar/openshift-git:latest
+- name: TIMEZONE
+  description: The timezone of the pods
+  value: Europe/Paris
+
+objects:
+
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: git-exporter
+  spec:
+    replicas: 1
+    strategy:
+      type: Rolling
+      rollingParams:
+        maxUnavailable: 1
+        maxSurge: 0
+    template:
+      metadata:
+        labels:
+          deploymentconfig: git-exporter
+      spec:
+        serviceAccountName: ${SERVICE_ACCOUNT}
+        containers:
+        - name: git-exporter
+          image: ${IMAGE}
+          args:
+          - openshift-git
+          - export
+          - ${TYPES}
+          - --watch
+          - --all-namespaces
+          - --repository-path=/var/repository
+          - --repository-remote=${REMOTE_GIT_REPOSITORY_URL}
+          - --repository-branch=${GIT_REPOSITORY_BRANCH}
+          - --repository-user-name=${GIT_AUTHOR_NAME}
+          - --repository-user-email=${GIT_AUTHOR_EMAIL}
+          - --repository-pull-period=${REMOTE_GIT_REPOSITORY_PULL_PERIOD}
+          - --repository-push-period=${REMOTE_GIT_REPOSITORY_PUSH_PERIOD}
+          - --resync-period=${RESYNC_PERIOD}
+          - --selector=${SELECTOR}
+          - --format=${FORMAT}
+          - --v=${LOG_LEVEL}
+          env:
+          - name: TZ
+            value: ${TIMEZONE}
+          volumeMounts:
+          - name: repository
+            mountPath: /var/repository
+            readOnly: false
+          - name: sshkeys
+            mountPath: /.ssh
+            readOnly: true
+        volumes:
+        - name: repository
+          emptyDir: {}
+        - name: sshkeys
+          secret:
+            secretName: ${SSH_KEYS_SECRET}
+    triggers:
+    - type: ConfigChange
