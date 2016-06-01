@@ -51,57 +51,57 @@ There are 2 ways to deploy this application on an OpenShift cluster:
 
   * create a `git-exporter` service account:
   
-  ```
-  oc create serviceaccount git-exporter
-  ```
+    ```
+    oc create serviceaccount git-exporter
+    ```
 
   * give the `cluster-reader` role to the newly created service account:
   
-  ```
-  oc adm policy add-cluster-role-to-user cluster-reader system:serviceaccount:$(oc project -q):git-exporter
-  ```
+    ```
+    oc adm policy add-cluster-role-to-user cluster-reader system:serviceaccount:$(oc project -q):git-exporter
+    ```
 
   * if you want to push to a remote git repository, you need to create a secret for your SSH key:
   
-  ```
-  oc create secret generic mysshkey --from-file=publickey=$HOME/.ssh/id_rsa.pub --from-file=privatekey=$HOME/.ssh/id_rsa --from-file=config=$HOME/.kube/ssh-config
-  ```
+    ```
+    oc create secret generic mysshkey --from-file=publickey=$HOME/.ssh/id_rsa.pub --from-file=privatekey=$HOME/.ssh/id_rsa --from-file=config=$HOME/.kube/ssh-config
+    ```
   
-  With the following content in the `$HOME/.kube/ssh-config` file:
-  
-  ```
-  Host *
-  IdentityFile ~/.ssh/privatekey
-  StrictHostKeyChecking no
-  ```
+    With the following content in the `$HOME/.kube/ssh-config` file:
+    
+    ```
+    Host *
+    IdentityFile ~/.ssh/privatekey
+    StrictHostKeyChecking no
+    ```
 
   * create a new application from the provided [openshift-template-full-cluster.yml](openshift-template-full-cluster.yml) template, and overwrite some parameters:
 
-  ```
-  oc new-app -f openshift-template-full-cluster.yml -p SERVICE_ACCOUNT=git-exporter,SSH_KEYS_SECRET=mysshkey,REMOTE_GIT_REPOSITORY_URL=git@github.com:USER/REPO.git
-  ```
+    ```
+    oc new-app -f openshift-template-full-cluster.yml -p SERVICE_ACCOUNT=git-exporter,SSH_KEYS_SECRET=mysshkey,REMOTE_GIT_REPOSITORY_URL=git@github.com:USER/REPO.git
+    ```
 
 * For exporting resources from a single namespace (does not requires specific rights):
 
   * if you want to push to a remote git repository, you need to create a secret for your SSH key:
   
-  ```
-  oc create secret generic mysshkey --from-file=publickey=$HOME/.ssh/id_rsa.pub --from-file=privatekey=$HOME/.ssh/id_rsa --from-file=config=$HOME/.kube/ssh-config
-  ```
-  
-  With the following content in the `$HOME/.kube/ssh-config` file:
-  
-  ```
-  Host *
-  IdentityFile ~/.ssh/privatekey
-  StrictHostKeyChecking no
-  ```
+    ```
+    oc create secret generic mysshkey --from-file=publickey=$HOME/.ssh/id_rsa.pub --from-file=privatekey=$HOME/.ssh/id_rsa --from-file=config=$HOME/.kube/ssh-config
+    ```
+    
+    With the following content in the `$HOME/.kube/ssh-config` file:
+    
+    ```
+    Host *
+    IdentityFile ~/.ssh/privatekey
+    StrictHostKeyChecking no
+    ```
 
   * create a new application from the provided [openshift-template-single-namespace.yml](openshift-template-single-namespace.yml) template, and overwrite some parameters:
 
-  ```
-  oc new-app -f openshift-template-single-namespace.yml -p SSH_KEYS_SECRET=mysshkey,REMOTE_GIT_REPOSITORY_URL=git@github.com:USER/REPO.git
-  ```
+    ```
+    oc new-app -f openshift-template-single-namespace.yml -p SSH_KEYS_SECRET=mysshkey,REMOTE_GIT_REPOSITORY_URL=git@github.com:USER/REPO.git
+    ```
 
 ## Running locally
 
